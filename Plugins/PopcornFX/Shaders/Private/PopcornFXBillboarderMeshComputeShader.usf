@@ -1,0 +1,84 @@
+//----------------------------------------------------------------------------
+// Copyright Persistant Studios, SARL. All Rights Reserved.
+// https://www.popcornfx.com/terms-and-conditions/
+//----------------------------------------------------------------------------
+
+/*=============================================================================
+PopcornFXBillboarderBillboardComputeShader.usf: Billboard renderer compute shader billboarder
+=============================================================================*/
+
+#include "/Engine/Public/Platform.ush"
+
+#if COMPILER_HLSL
+
+RWByteAddressBuffer		OutMatrices;
+ByteAddressBuffer		InSimData;
+
+uint					InPositionsOffset;
+uint					InOrientationsOffset;
+uint					InScalesOffset;
+
+float					PositionsScale;
+
+uint					InputOffset;
+uint					OutputVertexOffset;
+
+uint					HasLiveParticleCount;
+ByteAddressBuffer		LiveParticleCount;
+
+[numthreads(PK_GPU_THREADGROUP_SIZE, 1, 1)]
+void		Billboard(uint3 DTid : SV_DispatchThreadID)
+{
+	const uint		globali = DTid.x;
+	const uint		inputi = InputOffset + globali;
+	const uint		vstart = globali + OutputVertexOffset;
+
+	float	uniformScale = 1.0f;
+	if (HasLiveParticleCount != 0)
+	{
+		const uint		particleCount = asint(LiveParticleCount.Load(0));
+		if (inputi >= particleCount)
+		{
+			uniformScale = 0.0f;
+		}
+	}
+		
+	const float3	center = asfloat(InSimData.Load3(InPositionsOffset + inputi * 12));
+
+	float3	r0 = float3(1, 0, 0);
+	float3	r1 = float3(0, 1, 0);
+	float3	r2 = float3(0, 0, 1);
+		
+	float4	q;
+	{
+		q = asfloat(InSimData.Load4(InOrientationsOffset + inputi * 16));
+		
+		// Construct from quaternion
+		r0 = float3(1 - 2 * (q.y * q.y + q.z * q.z),
+						2 * (q.y * q.x + q.z * q.w),
+						2 * (q.z * q.x - q.y * q.w));
+						
+		r1 = float3(	2 * (q.x * q.y - q.z * q.w),
+					1 - 2 * (q.z * q.z + q.x * q.x),
+						2 * (q.z * q.y + q.x * q.w));
+						
+		r2 = float3(	2 * (q.x * q.z + q.y * q.w),
+						2 * (q.y * q.z - q.x * q.w),
+					1 - 2 * (q.y * q.y + q.x * q.x));
+	}
+	
+	float3	scale = asfloat(InSimData.Load(InScalesOffset + inputi * 4));
+	
+	float4	m0 = float4(r0 * scale, 				0) * uniformScale;
+	float4	m1 = float4(r1 * scale, 				0) * uniformScale;
+	float4	m2 = float4(r2 * scale, 				0) * uniformScale;
+	float4	m3 = float4(center * PositionsScale, 	1) * uniformScale;
+	
+	const uint		addr = vstart * 64;
+	OutMatrices.Store4(addr + 0 * 16, asint(m0));
+	OutMatrices.Store4(addr + 1 * 16, asint(m1));
+	OutMatrices.Store4(addr + 2 * 16, asint(m2));
+	OutMatrices.Store4(addr + 3 * 16, asint(m3));
+}
+
+#endif // COMPILER_HLSL
