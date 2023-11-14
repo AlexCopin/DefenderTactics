@@ -3,6 +3,13 @@
 	"EngineAssociation": "5.3",
 	"Category": "Samples",
 	"Description": "",
+	"Modules": [
+		{
+			"Name": "DefenderTactics",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	],
 	"Plugins": [
 		{
 			"Name": "GeometryScripting",
