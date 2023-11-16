@@ -1,0 +1,450 @@
+//----------------------------------------------------------------------------
+// Copyright Persistant Studios, SARL. All Rights Reserved.
+// https://www.popcornfx.com/terms-and-conditions/
+//----------------------------------------------------------------------------
+
+#include "/Engine/Public/Platform.ush"
+
+/*=============================================================================
+	PopcornFXVertexFactory.ush: PopcornFX Vertex factory shader code (CPU billboarded Billboards/Ribbons/Triangles)
+=============================================================================*/
+
+#include "/Engine/Private/VertexFactoryCommon.ush"
+#include "PopcornFXCommon.ush"
+
+// Must match PopcornFX::ERendererClass !
+#define Renderer_Billboard		0
+#define Renderer_Ribbon			1
+//#define Renderer_Mesh			2
+#define Renderer_Triangle		3
+//#define Renderer_Decal		4
+//#define Renderer_Light		5
+//#define Renderer_Sound		6
+
+//----------------------------------------------------------------------------
+// VS Inputs
+//----------------------------------------------------------------------------
+
+struct FVertexFactoryInput
+{
+	float3	Position				: ATTRIBUTE0;
+	float3	Normal					: ATTRIBUTE1;
+	float4	Tangent					: ATTRIBUTE2;
+	float2	TexCoord				: ATTRIBUTE3;
+	float2	TexCoord2				: ATTRIBUTE4;
+	float4	UVFactors				: ATTRIBUTE5;
+	float4	UVScalesAndOffsets		: ATTRIBUTE6;
+	float	AtlasID					: ATTRIBUTE7; // Should be an additional input
+
+	// Optional instance ID for vertex layered rendering
+#if FEATURE_LEVEL >= FEATURE_LEVEL_SM4 && ONEPASS_POINTLIGHT_SHADOW && USING_VERTEX_SHADER_LAYER
+	uint	InstanceId	: SV_InstanceID;
+#else
+#	if (ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 1)
+	VF_INSTANCED_STEREO_DECLARE_INPUT_BLOCK()
+#	endif // (ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 1)
+#endif
+	uint	VertexId : SV_VertexID;
+};
+
+//----------------------------------------------------------------------------
+//
+//----------------------------------------------------------------------------
+
+struct FVertexFactoryIntermediates
+{
+	float3	Position;
+
+	float4	ParticleColor;
+	float3	ParticleEmissiveColor;
+	
+#if (DYNAMIC_PARAMETERS_MASK & 1) || USE_DYNAMIC_PARAMETERS
+	float4	DynamicParameter;
+#endif
+#if (DYNAMIC_PARAMETERS_MASK & 2)
+	float4	DynamicParameter1;
+#endif
+#if (DYNAMIC_PARAMETERS_MASK & 4)
+	float4	DynamicParameter2;
+#endif
+#if (DYNAMIC_PARAMETERS_MASK & 8)
+	float4	DynamicParameter3;
+#endif
+
+#if (ENGINE_MAJOR_VERSION == 5)
+	/** Cached primitive and instance data */
+	FSceneDataIntermediates SceneData;
+#endif // (ENGINE_MAJOR_VERSION == 5)
+};
+
+//----------------------------------------------------------------------------
+// VS to PS
+//----------------------------------------------------------------------------
+
+struct FVertexFactoryInterpolantsVSToPS
+{
+	float4					ParticleColor			: TEXCOORD0;
+	float3					ParticleEmissiveColor	: TEXCOORD1;
+	float4					TexCoord				: TEXCOORD2;
+	float3					Normal					: TEXCOORD3;
+	float3					Tangent					: TEXCOORD4;
+	float4					UVFactors				: TEXCOORD5;
+	float4					UVScalesAndOffsets		: TEXCOORD10; // TEXCOORD6-9 are reserved
+	
+#if (DYNAMIC_PARAMETERS_MASK & 1) || USE_DYNAMIC_PARAMETERS
+	float4					DynamicParameter 		: PARTICLE_DYNAMIC_PARAM0;
+#endif
+#if (DYNAMIC_PARAMETERS_MASK & 2)
+	float4					DynamicParameter1 		: PARTICLE_DYNAMIC_PARAM1;
+#endif
+#if (DYNAMIC_PARAMETERS_MASK & 4)
+	float4					DynamicParameter2 		: PARTICLE_DYNAMIC_PARAM2;
+#endif
+#if (DYNAMIC_PARAMETERS_MASK & 8)
+	float4					DynamicParameter3 		: PARTICLE_DYNAMIC_PARAM3;
+#endif
+
+#if INSTANCED_STEREO
+	nointerpolation uint EyeIndex 					: PACKED_EYE_INDEX;
+#endif // (INSTANCED_STEREO)
+};
+
+//----------------------------------------------------------------------------
+//
+//----------------------------------------------------------------------------
+
+/** Converts from vertex factory specific interpolants to a FMaterialPixelParameters, which is used by material inputs. */
+FMaterialPixelParameters GetMaterialPixelParameters(FVertexFactoryInterpolantsVSToPS Interpolants, float4 PixelPosition)
+{
+	// GetMaterialPixelParameters is responsible for fully initializing the result
+	FMaterialPixelParameters	PixelParameters = MakeInitializedMaterialPixelParameters();
+
+	// TODO : Correct deformation on SoftAnim (texcoords.zw) ?
+	if (PopcornFXBillboardCommonUniforms.CorrectRibbonDeformation)
+	{
+		float 	mul1 = saturate(((Interpolants.TexCoord.x + Interpolants.TexCoord.y) - 1.0f) * 1e10);
+		float	oneMinus = 1.0f - mul1;
+		float2	UVFactorsXY = (Interpolants.TexCoord.xy / Interpolants.UVFactors.xy) * float2(oneMinus, oneMinus);
+		float2	UVFactorsZW = (float2(1.0f, 1.0f) - ((float2(1.0f, 1.0f) - Interpolants.TexCoord.xy) / Interpolants.UVFactors.zw)) * float2(mul1, mul1);
+		float2	UVs = UVFactorsXY + UVFactorsZW;
+		if (PopcornFXBillboardCommonUniforms.FlipUVs)
+			UVs = float2(UVs.y, UVs.x);
+		Interpolants.TexCoord.xy = (UVs * Interpolants.UVScalesAndOffsets.xy) + Interpolants.UVScalesAndOffsets.zw;
+	}
+
+#if NUM_TEX_COORD_INTERPOLATORS
+	#if NUM_TEX_COORD_INTERPOLATORS >= 1
+		PixelParameters.TexCoords[0] = Interpolants.TexCoord.xy;
+		#if NUM_TEX_COORD_INTERPOLATORS >= 2
+			PixelParameters.TexCoords[1] = Interpolants.TexCoord.zw;
+		#endif	// >= 2
+	#endif	// >= 1
+
+	#if NUM_TEX_COORD_INTERPOLATORS > 3
+		UNROLL
+		for(int CoordinateIndex = 2; CoordinateIndex < NUM_TEX_COORD_INTERPOLATORS; CoordinateIndex++)
+		{
+			PixelParameters.TexCoords[CoordinateIndex] = Interpolants.TexCoord.xy;
+		}
+	#endif	// > 3
+#endif	//NUM_TEX_COORD_INTERPOLATORS
+
+#if (DYNAMIC_PARAMETERS_MASK != 0)
+	PixelParameters.Particle.DynamicParameterValidMask = PopcornFXUniforms.DynamicParameterMask;
+#endif
+#if (DYNAMIC_PARAMETERS_MASK & 1) || USE_DYNAMIC_PARAMETERS
+	PixelParameters.Particle.DynamicParameter = Interpolants.DynamicParameter;
+#endif
+#if (DYNAMIC_PARAMETERS_MASK & 2)
+	PixelParameters.Particle.DynamicParameter1 = Interpolants.DynamicParameter1;
+#endif
+#if (DYNAMIC_PARAMETERS_MASK & 4)
+	PixelParameters.Particle.DynamicParameter2 = Interpolants.DynamicParameter2;
+#endif
+#if (DYNAMIC_PARAMETERS_MASK & 8)
+	PixelParameters.Particle.DynamicParameter3 = Interpolants.DynamicParameter3;
+#endif
+
+	PixelParameters.VertexColor = float4(Interpolants.ParticleEmissiveColor, 1);
+	PixelParameters.UnMirrored = 1;
+	PixelParameters.TwoSidedSign = 1;
+
+#if NEEDS_PARTICLE_COLOR
+	PixelParameters.Particle.Color = Interpolants.ParticleColor;
+#endif
+
+	if (PopcornFXBillboardCommonUniforms.NeedsBTN)
+	{
+		float3		normal = Interpolants.Normal;
+		float3		tangent = Interpolants.Tangent;
+		float3		binormal = normalize(cross(normal, tangent));
+		tangent = cross(binormal, normal);
+
+		PixelParameters.TangentToWorld[0] = tangent;
+		PixelParameters.TangentToWorld[1] = binormal;
+		PixelParameters.TangentToWorld[2] = normal;
+	}
+	return PixelParameters;
+}
+
+//----------------------------------------------------------------------------
+//
+//----------------------------------------------------------------------------
+
+/** Converts from vertex factory specific input to a FMaterialVertexParameters, which is used by vertex shader material inputs. */
+FMaterialVertexParameters GetMaterialVertexParameters(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates, float3 WorldPosition, float3x3 TangentToLocal)
+{
+#if (ENGINE_MAJOR_VERSION == 5) && (ENGINE_MINOR_VERSION >= 3)
+	FMaterialVertexParameters	VertexParameters = MakeInitializedMaterialVertexParameters();
+#else
+	FMaterialVertexParameters	VertexParameters = (FMaterialVertexParameters)0;
+#endif // (ENGINE_MAJOR_VERSION == 5) && (ENGINE_MINOR_VERSION >= 3)
+
+#if NUM_MATERIAL_TEXCOORDS_VERTEX
+	#if NUM_MATERIAL_TEXCOORDS_VERTEX >= 1
+		VertexParameters.TexCoords[0] = Input.TexCoord;
+		#if NUM_MATERIAL_TEXCOORDS_VERTEX >= 2
+			if (PopcornFXBillboardCommonUniforms.HasSecondUVSet)
+				VertexParameters.TexCoords[1] = Input.TexCoord2;
+			else
+				VertexParameters.TexCoords[1] = Input.TexCoord;
+		#endif // >= 2
+	#endif // >= 1
+	
+	#if NUM_MATERIAL_TEXCOORDS_VERTEX > 3
+		UNROLL
+		for(int CoordinateIndex = 2; CoordinateIndex < NUM_MATERIAL_TEXCOORDS_VERTEX; CoordinateIndex++)
+		{
+			VertexParameters.TexCoords[CoordinateIndex] = Input.TexCoord;
+		}
+	#endif	// > 3
+	
+#endif // NUM_MATERIAL_TEXCOORDS_VERTEX
+
+#if (ENGINE_MAJOR_VERSION == 5)
+	VertexParameters.SceneData = Intermediates.SceneData;
+#endif // (ENGINE_MAJOR_VERSION == 5)
+	VertexParameters.WorldPosition = WorldPosition;
+	VertexParameters.VertexColor = float4(Intermediates.ParticleEmissiveColor, 1);
+	VertexParameters.PreSkinnedPosition = Input.Position.xyz;
+	VertexParameters.PreSkinnedNormal = TangentToLocal[2].xyz;
+
+#if NEEDS_PARTICLE_COLOR
+	VertexParameters.Particle.Color = Intermediates.ParticleColor;
+#endif
+
+#if (DYNAMIC_PARAMETERS_MASK != 0)
+	VertexParameters.Particle.DynamicParameterValidMask = PopcornFXUniforms.DynamicParameterMask;
+#endif
+#if (DYNAMIC_PARAMETERS_MASK & 1) || USE_DYNAMIC_PARAMETERS
+	VertexParameters.Particle.DynamicParameter = Intermediates.DynamicParameter;
+#endif
+#if (DYNAMIC_PARAMETERS_MASK & 2)
+	VertexParameters.Particle.DynamicParameter1 = Intermediates.DynamicParameter1;
+#endif
+#if (DYNAMIC_PARAMETERS_MASK & 4)
+	VertexParameters.Particle.DynamicParameter2 = Intermediates.DynamicParameter2;
+#endif
+#if (DYNAMIC_PARAMETERS_MASK & 8)
+	VertexParameters.Particle.DynamicParameter3 = Intermediates.DynamicParameter3;
+#endif
+
+	VertexParameters.TangentToWorld = mul(TangentToLocal, GetLocalToWorld3x3());
+	return VertexParameters;
+}
+
+//----------------------------------------------------------------------------
+//
+//----------------------------------------------------------------------------
+
+// Construct the vertex factory intermediates
+FVertexFactoryIntermediates GetVertexFactoryIntermediates(FVertexFactoryInput Input)
+{
+	FVertexFactoryIntermediates Intermediates = (FVertexFactoryIntermediates)0;
+#if (ENGINE_MAJOR_VERSION == 5)
+	Intermediates.SceneData = VF_GPUSCENE_GET_INTERMEDIATES(Input);
+#endif // (ENGINE_MAJOR_VERSION == 5)
+
+	uint		particleID = 0;
+	const int	vertexID = Input.VertexId;
+	const int	vpp = PopcornFXBillboardVSUniforms.VPP; // Note: if tube/multiplane with differing vertex count end up being batched, this won't work.
+	const int	vppHalf = vpp / 2 - 1;
+	switch (PopcornFXBillboardVSUniforms.RendererType)
+	{
+	case	Renderer_Billboard:
+	{
+		if (vertexID < PopcornFXBillboardVSUniforms.CapsulesOffset * 4)
+			particleID = vertexID / 4;
+		else
+			particleID = PopcornFXBillboardVSUniforms.CapsulesOffset + (vertexID - (PopcornFXBillboardVSUniforms.CapsulesOffset * 4)) / 6;
+		break;
+	}
+	case	Renderer_Ribbon:
+	{
+		if (vertexID < PopcornFXBillboardVSUniforms.TubesPlanesOffset * 4) // No tube/multiplane batching yet with quad bb modes, but this might come.
+		{
+			// First two vertices within a quad: grab the current particle, last two: grab the next one
+			// Clamps to the total particle count to avoid overflowing the GPU sim buffers
+			particleID = min(vertexID / 4 + saturate(vertexID % 4 - 1), PopcornFXBillboardVSUniforms.TotalParticleCount - 1);
+		}
+		else
+		{
+			// First n (n being segmentCount/planeCount + 1) vertices: grab the current particle, last n: grab the next one
+			// Clamps to the total particle count to avoid overflowing the GPU sim buffers
+			particleID = min(PopcornFXBillboardVSUniforms.TubesPlanesOffset + (vertexID - (PopcornFXBillboardVSUniforms.TubesPlanesOffset * 4)) / vpp +
+							saturate(vertexID % vpp - vppHalf),
+							PopcornFXBillboardVSUniforms.TotalParticleCount - 1);
+		}
+		break;
+	}
+	case	Renderer_Triangle:
+	{
+		particleID = vertexID / 3;
+		break;
+	}
+	};
+
+	float3	vertexPosition = Input.Position;
+
+#if (ENGINE_MAJOR_VERSION == 5)
+	float3	worldVertexPosition = mul(float4(vertexPosition,1), LWCToFloat(GetPrimitiveDataFromUniformBuffer().LocalToWorld)).xyz;
+	worldVertexPosition += LWCToFloat(ResolvedView.PreViewTranslation);
+#else
+	float3	worldVertexPosition = mul(float4(vertexPosition,1), Primitive.LocalToWorld).xyz;
+	worldVertexPosition += ResolvedView.PreViewTranslation;
+#endif // (ENGINE_MAJOR_VERSION == 5)
+
+	Intermediates.Position = worldVertexPosition;
+
+	BRANCH
+	if (PopcornFXBillboardVSUniforms.InColorsOffset != -1)
+		Intermediates.ParticleColor = PKSimData_Load4f(particleID, PopcornFXBillboardVSUniforms.InColorsOffset);
+	BRANCH
+	if (PopcornFXBillboardVSUniforms.InEmissiveColorsOffset != -1)
+		Intermediates.ParticleEmissiveColor = PKSimData_Load3f(particleID, PopcornFXBillboardVSUniforms.InEmissiveColorsOffset);
+
+	float	alphaCursor = 0.0f;
+	BRANCH
+	if (PopcornFXBillboardVSUniforms.InAlphaCursorsOffset != -1)
+		alphaCursor = PKSimData_Loadf(particleID, PopcornFXBillboardVSUniforms.InAlphaCursorsOffset);
+	
+#if (DYNAMIC_PARAMETERS_MASK & 1) || USE_DYNAMIC_PARAMETERS
+	Intermediates.DynamicParameter = float4(Input.AtlasID, alphaCursor, 0, 0);
+#endif
+#if (DYNAMIC_PARAMETERS_MASK & 2)
+	BRANCH
+	if (PopcornFXBillboardVSUniforms.InDynamicParameter1sOffset != -1)
+		Intermediates.DynamicParameter1 = PKSimData_Load4f(particleID, PopcornFXBillboardVSUniforms.InDynamicParameter1sOffset);
+#endif
+#if (DYNAMIC_PARAMETERS_MASK & 4)
+	BRANCH
+	if (PopcornFXBillboardVSUniforms.InDynamicParameter2sOffset != -1)
+		Intermediates.DynamicParameter2 = PKSimData_Load4f(particleID, PopcornFXBillboardVSUniforms.InDynamicParameter2sOffset);
+#endif
+#if (DYNAMIC_PARAMETERS_MASK & 8)
+	BRANCH
+	if (PopcornFXBillboardVSUniforms.InDynamicParameter3sOffset != -1)
+		Intermediates.DynamicParameter3 = PKSimData_Load4f(particleID, PopcornFXBillboardVSUniforms.InDynamicParameter3sOffset);
+#endif
+
+	return Intermediates;
+}
+
+//----------------------------------------------------------------------------
+//
+//----------------------------------------------------------------------------
+
+// Simply construct a float4 value from the previously computed position
+float4 VertexFactoryGetWorldPosition(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates)
+{
+	return float4(Intermediates.Position, 1);
+}
+
+//----------------------------------------------------------------------------
+//
+//----------------------------------------------------------------------------
+
+// No additional computation, simply return the already translated world position
+float4 VertexFactoryGetRasterizedWorldPosition(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates, float4 TranslatedWorldPosition)
+{
+	return TranslatedWorldPosition;
+}
+
+// since 4.12
+float3 VertexFactoryGetPositionForVertexLighting(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates, float3 TranslatedWorldPosition)
+{
+	return TranslatedWorldPosition;
+}
+
+//----------------------------------------------------------------------------
+//
+//----------------------------------------------------------------------------
+
+FVertexFactoryInterpolantsVSToPS VertexFactoryGetInterpolantsVSToPS(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates, FMaterialVertexParameters VertexParameters)
+{
+	FVertexFactoryInterpolantsVSToPS Interpolants = (FVertexFactoryInterpolantsVSToPS)0;
+
+	Interpolants.TexCoord.xy = Input.TexCoord;
+	if (PopcornFXBillboardCommonUniforms.HasSecondUVSet)
+		Interpolants.TexCoord.zw = Input.TexCoord2;
+	Interpolants.ParticleColor = Intermediates.ParticleColor;
+	Interpolants.ParticleEmissiveColor = Intermediates.ParticleEmissiveColor;
+	Interpolants.Normal = Input.Normal;
+	Interpolants.Tangent = Input.Tangent.xyz;
+
+	Interpolants.UVFactors = Input.UVFactors;
+	Interpolants.UVScalesAndOffsets = Input.UVScalesAndOffsets;
+
+#if (DYNAMIC_PARAMETERS_MASK & 1) || USE_DYNAMIC_PARAMETERS
+	Interpolants.DynamicParameter = Intermediates.DynamicParameter;
+#endif
+#if (DYNAMIC_PARAMETERS_MASK & 2)
+	Interpolants.DynamicParameter1 = Intermediates.DynamicParameter1;
+#endif
+#if (DYNAMIC_PARAMETERS_MASK & 4)
+	Interpolants.DynamicParameter2 = Intermediates.DynamicParameter2;
+#endif
+#if (DYNAMIC_PARAMETERS_MASK & 8)
+	Interpolants.DynamicParameter3 = Intermediates.DynamicParameter3;
+#endif
+
+#if INSTANCED_STEREO
+	Interpolants.EyeIndex = 0;
+#endif
+
+	return Interpolants;
+}
+
+//----------------------------------------------------------------------------
+//
+//----------------------------------------------------------------------------
+
+// we dont care, seems use only as parameter for GetMaterialVertexParameters (who dont use it)
+float3x3 VertexFactoryGetTangentToLocal(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates)
+{
+	return float3x3(1, 0, 0, 0, 1, 0, 0, 0, 1);
+}
+
+float4 VertexFactoryGetPreviousWorldPosition(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates)
+{
+	return VertexFactoryGetWorldPosition(Input, Intermediates);
+}
+
+float4 VertexFactoryGetTranslatedPrimitiveVolumeBounds(FVertexFactoryInterpolantsVSToPS Interpolants)
+{
+	return 0;
+}
+
+uint VertexFactoryGetPrimitiveId(FVertexFactoryInterpolantsVSToPS Interpolants)
+{
+	return 0;
+}
+
+float3 VertexFactoryGetWorldNormal(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates)
+{
+	return Input.Normal;
+}
+
+#if (ENGINE_MAJOR_VERSION == 5)
+#	include "/Engine/Private/VertexFactoryDefaultInterface.ush"
+#endif // (ENGINE_MAJOR_VERSION == 5)
