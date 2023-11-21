@@ -1,0 +1,9 @@
+{
+	"BuildId": "27405482",
+	"Modules": 
+	{
+		"PopcornFX": "UnrealEditor-PopcornFX.dll",
+		"PopcornFXEditor": "UnrealEditor-PopcornFXEditor.dll",
+		"PopcornFXOnDefault": "UnrealEditor-PopcornFXOnDefault.dll"
+	}
+}
