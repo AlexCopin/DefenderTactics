@@ -1,0 +1,15 @@
+FX DEF TAC
+
+- halo autour du choix (comme tsb)
+- confirmation du choix
+- apparition des choix
+- poussière pas (comme tsb)
+- shader ennemi meurt
+- indicateur degats subits
+- explosion + decal sur nexus
+- petites pièces d'or au dessus du compteur
+- tir tourelle
+- pouf fumée quand tourelle placée
+- halo légèrement grisé pour indiquer portée max de tourelle (shader emissive sur plane avec fresnel)
+- highlight tourelle couleur ((shader fresnel * couleur) * couleur tour)
+- 
