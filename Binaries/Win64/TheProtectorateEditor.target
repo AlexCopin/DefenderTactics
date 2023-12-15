@@ -1,11 +1,11 @@
 {
-	"TargetName": "DefenderTacticsEditor",
+	"TargetName": "TheProtectorateEditor",
 	"Platform": "Win64",
 	"Configuration": "Development",
 	"TargetType": "Editor",
 	"IsTestTarget": false,
 	"Architecture": "x64",
-	"Project": "../../DefenderTactics.uproject",
+	"Project": "../../TheProtectorate.uproject",
 	"Launch": "$(EngineDir)/Binaries/Win64/UnrealEditor.exe",
 	"LaunchCmd": "$(EngineDir)/Binaries/Win64/UnrealEditor-Cmd.exe",
 	"Version": 
@@ -22,11 +22,11 @@
 	},
 	"BuildProducts": [
 		{
-			"Path": "$(ProjectDir)/Binaries/Win64/UnrealEditor-DefenderTactics.dll",
+			"Path": "$(ProjectDir)/Binaries/Win64/UnrealEditor-TheProtectorate.dll",
 			"Type": "DynamicLibrary"
 		},
 		{
-			"Path": "$(ProjectDir)/Binaries/Win64/UnrealEditor-DefenderTactics.pdb",
+			"Path": "$(ProjectDir)/Binaries/Win64/UnrealEditor-TheProtectorate.pdb",
 			"Type": "SymbolFile"
 		},
 		{
@@ -3160,10 +3160,6 @@
 	],
 	"RuntimeDependencies": [
 		{
-			"Path": "$(ProjectDir)/DefenderTactics.uproject",
-			"Type": "UFS"
-		},
-		{
 			"Path": "$(ProjectDir)/Plugins/IconBaker/IconBaker.uplugin",
 			"Type": "UFS"
 		},
@@ -3173,6 +3169,10 @@
 		},
 		{
 			"Path": "$(ProjectDir)/Plugins/PopcornFX/PopcornFX.uplugin",
+			"Type": "UFS"
+		},
+		{
+			"Path": "$(ProjectDir)/TheProtectorate.uproject",
 			"Type": "UFS"
 		},
 		{
