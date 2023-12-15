@@ -2,6 +2,7 @@
 	"BuildId": "27405482",
 	"Modules": 
 	{
-		"DefenderTactics": "UnrealEditor-DefenderTactics.dll"
+		"DefenderTactics": "UnrealEditor-DefenderTactics.dll",
+		"TheProtectorate": "UnrealEditor-TheProtectorate.dll"
 	}
 }
